@@ -1,0 +1,885 @@
+---
+title: " Stress Test Model " 
+author: "Thalles Quinaglia Liduares"
+date: "22/03/2022"
+output: html_document
+
+---
+
+
+```{r, include=FALSE}
+
+setwd("C:\\Program Files\\R\\Dados")
+
+```
+
+
+# Introdução
+
+Neste estudo, a série denominada “Inadimplência da carteira de crédito das 
+instituições financeiras sob controle privado – Total” será modelada com técnicas
+de séries temporais univariada e multivariada. Inicialmente, o modelo ARIMA será
+adotado para estimar a série de inadimplência com base em seus valores defasados 
+e componentes de médias móveis. Em posse do modelo, será realizada a previsão da
+série para o periodo de dezembro de 2024.
+
+Posteriormente, no caso multivariado, o modelo ARIMAX será adotado para modelar 
+a série de inadimplência com base em variáveis explicativas macroecônomicas.
+
+Upload packages
+
+```{r, warning=FALSE, message=FALSE}
+
+
+library(readxl)
+library(forecast)
+library(tseries)
+library(lmtest)
+library(dplyr)
+library(corrplot)
+library(ggplot2)
+#library(TSPred)
+
+
+source("http://www.sthda.com/upload/rquery_cormat.r")
+
+```
+
+Upload database
+
+```{r, warning=FALSE, message=FALSE} 
+
+data<-readxl::read_excel("Data_Stress.xlsx")
+
+attach(data)
+
+```
+
+#### Overview da base de dados
+
+```{r}
+glimpse(data)
+```
+
+
+## Variáveis consideradas na análise
+
+### Variavel dependente
+
+* `Taxa_Inad` - Taxa de inadimplência da carteira de crédito das instituições financeiras 
+sob controle privado Total (%)” (Mensal).
+
+### Variáveis explicativas
+
+* `PIB Mensal (Indice)` - Indice do PIB - (Mensal)
+
+* `Retail Sales` - Indice de Vendas no varejo - (Mensal)
+
+* `IPCA` - Ìndice geral de preços ao consumidor amplo - (Mensal).
+
+* `Business Credit Concessions` - Ìndice da concessão de crédito para negócios (Mensal)
+
+* `DSLP` - Dívida Líquida do Setor Público (%) - (Mensal).
+
+* `Index of Employed Persons - Industry` - Proxy para taxa de pessoas empregadas - (Mensal)
+
+* `USD/BRL` - Taxa de câmbio - (Mensal)
+
+* `Industrial Production` - Ìndice de produção industrial - ( Mensal)
+
+* `Uncertainy Index`- Ìndice de incerteza da economia - (Mensal)
+
+* `Taxa Real de Juros` - Taxa real de juros básica da economia (%)- (Mensal)
+
+* `Commodity price index` - Indice de preço de commodities - (Mensal)
+
+* `Business Confidence Index` - Ìndice de confiança nos negócios. - (Mensal)
+
+* `Cut` : Custo Unitário do Trabalho - (Mensal).
+
+
+#### Matriz de correlação
+
+A seguir, será plotado a matriz de correlação, para analisar o grau de correlação
+entre as variáveis do modelo.
+
+```{r}
+tab_cor<- data %>%
+        select(
+          `IBC-BR`,
+          PIB_Index,
+          `Retail Sales`,
+          `Business Credit Concessions`,
+          `Business Confidence Index`,
+          `USD/BRL`,
+          `Commodity Price Index`,
+          `Index of Employed Persons - Industry`,
+          `Uncertainty Index`,
+          Index_Inad,
+          IPCA,
+          DLSP, 
+          Cut, #Custo unitario do Trabalho
+          Juro_Real
+          )
+
+rquery.cormat(tab_cor)        
+        
+```
+
+
+Com base na matriz de correlação acima, destaca-se:
+
+* Uma correlação negativa entre a taxa de inadimplência e indice de crédito 
+para negócios.
+
+* Uma alta correlação positiva entre a taxa de câmbio e o indice de incerteza da economia.
+
+* Uma alta correlação negativa entre a taxa de inadimplência e a taxa de câmbio.
+
+
+
+## Teste de estacionariedade
+
+A seguir, com base no teste Kpss, será analisado se a série de inadimplência
+no Brasil é estacionária.
+
+Variável dependente: Taxa de Inadimplência 
+
+```{r}
+
+Taxa_Inad<-ts(data$Index_Inad, start=c(2006,1), end=c(2021,12),frequency=12)
+
+```
+
+Teste de estacionariedade
+
+```{r}
+
+ndiffs(Taxa_Inad, alpha=0.05, test="kpss")
+
+```
+
+Portanto, a série de inadimplência no Brasil não é estacionária, pois é necessário
+1 processo de diferenciação para torna-la estacionária.
+
+
+#### ACF e PACF
+
+```{r}
+
+par(mfrow=c(2,2))
+
+diff_taxa_inad<-diff(Taxa_Inad)
+
+plot.ts(Taxa_Inad, xlab="Ano")
+
+plot.ts(diff_taxa_inad, xlab="Ano")
+
+acf(diff_taxa_inad)
+
+pacf(diff_taxa_inad)
+
+```
+
+
+# Análise univariada
+
+Nesta seção, a série de inadimplência será modelada de forma univariada, ou seja, 
+os valores defasados da própria variável serão utilizados como preditores do valor
+atual e futuro.
+
+## Modelo Arima
+
+A função `auto.arima()` do pacote `forecasts` realiza a estimação iterativa do 
+modelo ARIMA que melhor se adequa a série temporal, com base na minimização do
+critério de informação de Akaike (AIC).
+
+```{r}
+
+mod_arima<-auto.arima(Taxa_Inad, trace=TRUE, approximation=FALSE)
+
+```
+
+
+Com base na função `auto.arima()`, o modelo implementado para representar a 
+série de inadimplência, será o ARIMA(4,1,1)(2,0,0).
+
+#### Análise dos resíduos
+
+O teste de Ljung-Box, analisa a correlação dos resíduos do modelo ARIMA estimado.
+
+```{r}
+
+checkresiduals(mod_arima)
+
+Box.test(mod_arima$residuals, type="Ljung-Box")
+
+```
+
+Com base no p-valor, constata-se a ausência de correlação entre os resíduos.
+
+
+#### Previsão do modelo (univariado)
+
+```{r}
+
+previsao24<-forecast(mod_arima, h=36) # 36 meses a frente
+
+summary(previsao24$fitted)
+
+```
+
+
+Portanto, no período analisado o valor médio e mediano da taxa de inadimplência, 
+foi de 4.12% e 4.08%, respectivamente.
+
+
+#### Acurácia do modelo univariado
+
+```{r}
+accuracy(previsao24)
+```
+
+
+O erro absoluto médio, representado por MAE, é igual a aproximadamente 6,4%.
+
+A raiz do erro médio ao quadrado, representado por RMSE, é igual a aproximadamente
+8,6%.
+
+#### Gráfico da previsão 
+
+```{r}
+
+autoplot(previsao24, xlab="Ano", ylab="Taxa de inadimplência dos bancos (%)")
+
+```
+
+#### Gráfico dos valores previstos e efetivos 
+
+```{r}
+
+previsao24 %>%
+  autoplot() +
+  geom_line(
+    aes(
+      x = as.numeric(time(Taxa_Inad)),
+      y = as.numeric(mod_arima$fitted)
+    ),
+    col = "green"
+  )
+
+```
+
+
+
+### Modelo Multivariado
+
+Com base no enunciado, o ano de 2021 será utilizado para validação da previsão.
+Desta forma, 180 observações (93.75%) da amostra será para treino e 12 observações
+(6.25%) para teste.
+
+#### Partição da amostra entre treino e teste.
+
+```{r}
+
+treino<-data[1:180,]
+teste<-data[181:192,]
+
+```
+
+#### Variável Endógena
+
+```{r}
+
+v0<-ts(treino$Index_Inad,
+       frequency = 12,
+       start=c(2006,1))
+```
+
+#### Variaveis Exógenas 
+
+```{r}
+
+v1<-ts(treino$`IBC-BR`,
+             frequency=12,
+             start=c(2006,01))
+
+
+v2<-ts(treino$PIB_Index,
+             frequency=12,
+             start=c(2006,01))
+
+v3<-ts(treino$`Retail Sales`,
+             frequency=12,
+             start=c(2006,01))
+
+v4<-ts(treino$`Business Credit Concessions`,
+             frequency=12,
+             start=c(2006,01))
+
+v5<-ts(treino$`Business Confidence Index`,
+             frequency=12,
+             start=c(2006,01))
+
+v6<-ts(treino$`Commodity Price Index`,
+             frequency=12,
+             start=c(2006,01))
+
+v7<-ts(treino$`USD/BRL`,
+             frequency=12,
+             start=c(2006,01))
+
+v8<-ts(treino$`Index of Employed Persons - Industry`,
+             frequency=12,
+             start=c(2006,01))
+
+v9<-ts(treino$`Uncertainty Index`,
+             frequency=12,
+             start=c(2006,01))
+
+v10<-ts(treino$IPCA,
+             frequency=12,
+             start=c(2006,01))
+
+v11<-ts(treino$Juro_Real,
+             frequency=12,
+             start=c(2006,01))
+
+v12<-ts(treino$Cut,
+             frequency=12,
+             start=c(2006,01))
+
+v13<-ts(treino$DLSP,
+             frequency=12,
+             start=c(2006,01))
+
+vxreg<-cbind(
+  #v1,  `IBC-BR`
+  #v2,   #Pib Index
+  v3,  # Retail Sales
+  #v4,  # BCC
+ #v5,  #BCI 
+  #v6,  #CPI
+  #v7,  #Cambio 
+  #v8,  #Emprego
+  v9,  #Unc Index
+ #v10, #IPCA
+  v11,  # Juro Real 
+  v12  #Cut
+ #v13  #DLSP 
+)
+
+
+```
+
+####  Modelo ARIMAX 
+
+Variaveis exógenas selecionadas: `Retail Sales`, `Uncertainy Index`, `Taxa Real de Juros`
+e `Custo Unitário do Trabalho`.
+
+
+```{r}
+
+fit.arima<-auto.arima(v0, xreg=vxreg)
+
+
+summary(fit.arima)
+
+```
+
+#### Análise dos resíduos 
+
+```{r}
+
+checkresiduals(fit.arima)
+
+Box.test(fit.arima$residuals, type="Ljung-Box")
+
+```
+
+
+Com base no teste de Ljung-Box, constata-se a ausência de correlação dos resíduos.
+
+
+#### Variáveis para validação da estimação
+
+```{r}
+
+w0<-ts(teste$Index_Inad,
+             frequency=12,
+             start=c(2021,01))
+
+
+w1<-ts(teste$`IBC-BR`,
+             frequency=12,
+             start=c(2021,01))
+
+w2<-ts(teste$PIB_Index,
+             frequency=12,
+             start=c(2021,01))
+
+w3<-ts(teste$`Retail Sales`,
+             frequency=12,
+             start=c(2021,01))
+
+w4<-ts(teste$`Business Credit Concessions`,
+             frequency=12,
+             start=c(2021,01))
+
+w5<-ts(teste$`Business Confidence Index`,
+             frequency=12,
+             start=c(2021,01))
+
+w6<-ts(teste$`Commodity Price Index`,
+             frequency=12,
+             start=c(2021,01))
+
+w7<-ts(teste$`USD/BRL`,
+             frequency=12,
+             start=c(2021,01))
+
+w8<-ts(teste$`Index of Employed Persons - Industry`,
+             frequency=12,
+             start=c(2021,01))
+
+w9<-ts(teste$`Uncertainty Index`,
+             frequency=12,
+             start=c(2021,01))
+
+w10<-ts(teste$IPCA,
+             frequency=12,
+             start=c(2021,01))
+
+w11<-ts(teste$Juro_Real,
+             frequency=12,
+             start=c(2021,01))
+
+w12<-ts(teste$Cut,
+             frequency=12,
+             start=c(2021,01))
+
+w13<-ts(teste$DLSP,
+             frequency=12,
+             start=c(2021,01))
+
+wxreg<-cbind(
+  #w1,# `IBC-BR`
+  #w2,   #Pib Index
+  w3,  # Retail Sales
+  #w4,  # BCC
+ # w5,  #BCI 
+  #w6,  #CPI
+  #w7,  #Cambio 
+  #w8,  #Emprego
+  w9,  #Unc Index
+ #w10, #IPCA
+  w11,  # Juro Real (Baixo)
+  w12#v12  #Cut
+ #w13  #DLSP (ALto)
+)
+```
+
+#### Raizes ARIMAX
+
+```{r}
+
+autoplot(fit.arima)
+
+```
+
+
+
+
+
+
+
+#### Gráfico (In-Sample)
+
+```{r}
+
+
+plot.ts(fit.arima$fitted,
+       xlab="Anos",
+       ylab="Taxa de Inadimplência bancária (%)",
+        main="Evolução taxa de inadimplência: valores dentro da amostra",
+       col="blue")
+
+```
+
+
+
+
+#### Previsão fora da amostra
+
+Validação para 2021
+
+```{r}
+
+previsao21<-forecast(fit.arima, xreg = wxreg)
+
+previsao21
+
+```
+```{r}
+
+previsao21 %>%
+  autoplot() +
+  geom_line(
+    aes(
+      x = as.numeric(time(v0)),
+      y = as.numeric(fit.arima$fitted)
+    ),
+    col = "green"
+  )
+```
+
+
+
+
+
+
+#### Análise dos resíduos
+
+```{r}
+
+autoplot(previsao21$residuals)
+
+Box.test(previsao21$residuals, type = "Ljung-Box")
+
+```
+
+
+Com base no p-valor do teste Ljung-Box, constata-se que os residuos são não
+correlacionados.
+
+
+
+#### Acurácia
+
+```{r}
+
+accuracy(previsao21, teste$Index_Inad)
+
+```
+
+
+
+```{r}
+
+previsao24<-forecast(fit.arima, xreg=vxreg, h=36)
+
+fit.prev<-previsao24$fitted[1:36]
+
+summary(fit.prev)
+
+round(sd(fit.prev),2) #Desvio Padrão 
+
+```
+
+
+Portanto, a taxa de inadimplência média no período entre 2022 e 2024, será igual a
+3.89% com desvio padrão de 36%.
+
+
+#### Acurácia da previsão 
+
+```{r}
+accuracy(previsao24)
+```
+
+Neste caso, o MAE, apresentou valor igual a 6.64% e o RMSE igual a 8.7%.
+
+
+# Conclusão
+
+Com base em modelos univariados e multivariados de séries temporais, foi modelada
+a série de inadimplência dos bancos privados no Brasil. Neste estudo, a série 
+histórica mensal, obtida junto ao SGS do Banco Central do Brasil cobre o período
+de janeiro de 2006 a dezembro de 2021. Ademais, foi construido um banco de dados
+contendo 16 variáveis macroecônomicas, totalizando 192 observações. Com base no
+teste de raiz unitária foi possível constatar que a série de inadimplência no Brasil 
+não é estacionária.
+
+Primeiramente, com base no modelo ARIMA, a série de inadimplência foi estimada 
+utilizando seus termos autoregressivos e de médias móveis. A previsão foi realizada
+considerando os 36 meses a frente. Em seguida, no modelo multivariado, a amostra
+foi particionada entre treino e teste, para realização da previsão fora da amostra
+e testar a validação da estimação. 
+
+No modelo ARIMAX, as seguintes variáveis explicativas foram incluidas: Vendas
+no Varejo, Indice de Incerteza, Taxa Real de Juros e Custo Unitário de Trabalho,
+pois apresentaram conjuntamente, menor correlação dos resíduos. O valor médio 
+da taxa de inadimplência prevista para o período até dez/24 foi igual a 3.89% com 
+desvio padrão de 36%, o qual pode ser indicio de forte volatidade no período em 
+questão.
+
+
+ 
+
+
+
+
+# Apêndice
+
+##### Testes de estacionariedade das variáveis explicativas 
+
+####  `IBC-BR`
+
+```{r}
+
+data$`IBC-BR`<-ts(data$`IBC-BR`)
+
+ndiffs(`IBC-BR`, alpha=0.05, test="kpss")
+
+diff_ibc_br<-diff(`IBC-BR`)
+
+par(mfrow=c(2,1))
+
+plot.ts(`IBC-BR`)
+
+plot.ts(diff_ibc_br)
+
+
+
+
+```
+
+
+####  `IPCA`
+
+```{r}
+
+data$IPCA<-ts(data$IPCA, start=c(2006,1), frequency=12)
+
+ndiffs(IPCA, alpha=0.05, test="kpss")
+
+diff_ipca<-diff(IPCA)
+
+par(mfrow=c(2,1))
+
+plot.ts(IPCA)
+
+plot.ts(diff_ipca)
+
+```
+
+####  `Industrial Production`
+
+```{r}
+
+data$PIB_Index<-ts(data$PIB_Index)
+
+ndiffs(PIB_Index, alpha=0.05, test="kpss")
+
+diff_Pib_ind<-diff(PIB_Index)
+
+par(mfrow=c(2,1))
+
+plot.ts(PIB_Index)
+
+plot.ts(diff_Pib_ind)
+
+```
+
+####  `Retail Sales`
+
+```{r}
+
+data$`Retail Sales`<-ts(data$`Retail Sales`)
+
+ndiffs(`Retail Sales`, alpha=0.05, test="kpss")
+
+diff_Ret_sal<-diff(`Retail Sales`)
+
+par(mfrow=c(2,1))
+
+plot.ts(`Retail Sales`)
+
+plot.ts(diff_Ret_sal)
+
+
+```
+
+#### `Business Credit Concessions`
+
+
+```{r}
+
+data$`Business Credit Concessions`<-data$`Business Credit Concessions`
+
+ndiffs(`Business Credit Concessions`, alpha=0.05, test="kpss")
+
+diff_bus_cred<-diff(`Business Credit Concessions`)
+
+par(mfrow=c(2,1))
+
+plot.ts(`Business Credit Concessions`)
+
+plot.ts(diff_bus_cred)
+
+```
+
+####  `Business Confidence Index`
+
+```{r}
+
+data$`Business Confidence Index`<-ts(data$`Business Confidence Index`)
+
+ndiffs(`Business Confidence Index`, alpha=0.05, test="kpss")
+
+diff_conf_indx<-diff(`Business Confidence Index`)
+
+par(mfrow=c(2,1))
+
+plot.ts(`Business Confidence Index`)
+
+plot.ts(diff_conf_indx)
+
+```
+
+####  `DSLP`
+
+```{r}
+
+data$DLSP<-ts(data$DLSP)
+
+ndiffs(`DLSP`, alpha=0.05, test="kpss")
+
+diff_dlsp<-diff(`DLSP`)
+
+diff_dlsp_2<-diff(diff_dlsp)
+
+par(mfrow=c(3,1))
+
+plot.ts(`DLSP`)
+
+plot.ts(diff_dlsp)
+
+plot.ts(diff_dlsp_2)
+
+```
+
+#### `Index of Employed Persons - Industry`
+
+
+```{r}
+
+data$`Index of Employed Persons - Industry`<-ts(data$`Index of Employed Persons - Industry`)
+
+ndiffs(`Index of Employed Persons - Industry`, alpha=0.05, test="kpss")
+
+diff_indx_emp<-diff(`Index of Employed Persons - Industry`)
+
+diff_indx_emp2<-diff(diff_indx_emp)
+
+par(mfrow=c(3,1))
+
+plot.ts(`Index of Employed Persons - Industry`)
+
+plot.ts(diff_indx_emp)
+
+plot.ts(diff_indx_emp2)
+
+length(diff_indx_emp)
+
+length(diff_indx_emp2)
+
+```
+
+
+####  - `USD/BRL`
+
+```{r}
+
+data$`USD/BRL`<-ts(data$`USD/BRL`)
+
+ndiffs(`USD/BRL`, alpha=0.05, test="kpss")
+
+diff_Usd_brl<-diff(`USD/BRL`)
+
+par(mfrow=c(2,1))
+
+plot.ts(`USD/BRL`)
+
+plot.ts(diff_Usd_brl)
+
+length(diff_Usd_brl)
+
+```
+
+
+#### `Commodity price index`
+
+```{r}
+
+data$`Commodity Price Index`<-ts(data$`Commodity Price Index`)
+
+ndiffs(`Commodity Price Index`, alpha=0.05, test="kpss")
+
+diff_comm_indx<-diff(`Commodity Price Index`)
+
+diff_comm_indx2<-diff(diff_comm_indx)
+
+par(mfrow=c(3,1))
+
+plot.ts(`Commodity Price Index`)
+
+plot.ts(diff_conf_indx)
+
+plot.ts(diff_comm_indx2)
+
+```
+
+#### `Uncertainy Index`
+
+```{r}
+
+data$`Uncertainty Index`<-ts(data$`Uncertainty Index`)
+
+ndiffs(`Uncertainty Index`, alpha=0.05, test="kpss")
+
+diff_unc_indx<-diff(`Uncertainty Index`)
+
+par(mfrow=c(2,1))
+
+plot.ts(`Uncertainty Index`)
+
+plot.ts(diff_unc_indx)
+
+
+```
+
+#### `Taxa Real de Juros`
+
+```{r}
+
+data$juros<-ts(data$Juro_Real)
+
+ndiffs(Juro_Real, alpha=0.05, test="kpss")
+
+diff_juros<-diff(Juro_Real)
+
+par(mfrow=c(2,1))
+
+plot.ts(Juro_Real)
+
+plot.ts(diff_juros)
+
+
+```
+#### `Custo Unitário do trabalho`
+
+```{r}
+ndiffs(Cut, alpha=0.05, test="kpss")
+
+diff_cut<-diff(Cut)
+
+par(mfrow=c(2,1))
+
+plot.ts(Cut,xlab="Meses")
+
+plot.ts(diff_cut, xlab="Meses")
+```
+
+
+
